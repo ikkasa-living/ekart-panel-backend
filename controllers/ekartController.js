@@ -182,11 +182,11 @@ export const createEkartReturn = async (req, res) => {
       data: response.data,
     });
   } catch (error) {
-    console.error("Ekart return error:", error.response?.data || error.message);
-    return res.status(500).json({
-      success: false,
-      message: "Ekart create failed",
-      details: error.response?.data || error.message,
-    });
-  }
+  console.error("Ekart return error:", error?.response?.data || error.message, error?.response?.status, error?.response?.headers);
+  return res.status(500).json({
+    success: false,
+    message: "Ekart create failed",
+    details: error?.response?.data || error.message,
+  });
+}
 };
