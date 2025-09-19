@@ -29,11 +29,8 @@ export const uploadAndMergeCSV = async (req, res) => {
       results = xlsx.utils.sheet_to_json(worksheet);
       await processRowsAndRespond(results, req, res);
     } else {
-      // Unsupported file type
       fs.unlinkSync(req.file.path);
-      return res
-        .status(400)
-        .json({ success: false, error: "Unsupported file type" });
+      return res.status(400).json({ success: false, error: "Unsupported file type" });
     }
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -94,13 +91,15 @@ async function processRowsAndRespond(results, req, res) {
         (key) => updateData[key] === undefined && delete updateData[key]
       );
 
-      const updated = await Order.findOneAndUpdate(
+      // Upsert: update existing or insert new if not exists
+      await Order.updateOne(
         { orderId },
-        { $set: updateData },
-        { new: true }
+        { $set: updateData, $setOnInsert: { orderId } },
+        { upsert: true }
       );
 
-      return updated;
+      // Optionally return the modified document by refetch if needed
+      return Order.findOne({ orderId });
     });
 
     const updatedOrders = (await Promise.all(updatePromises)).filter(Boolean);
