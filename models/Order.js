@@ -44,8 +44,6 @@ const orderSchema = new mongoose.Schema(
     gstinNumber: { type: String },
     category: { type: String },
     unitPrice: { type: Number },
-
-    vendorName: { type: String },
     pickupAddress: { type: String },
     pickupCity: { type: String },
     pickupState: { type: String },
@@ -69,7 +67,7 @@ const orderSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Pre-save middleware to ensure status is never empty or null
+// Ensure status is never empty or null
 orderSchema.pre("save", function (next) {
   if (!this.status || this.status.trim() === "") {
     this.status = "New";

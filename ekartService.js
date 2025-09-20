@@ -39,11 +39,10 @@ export async function getAuthToken() {
     if (!token) throw new Error("Token missing in auth response");
 
     cachedToken = token;
-    tokenExpiry = Date.now() + 55 * 60 * 1000; // Cache 55 minutes
+    tokenExpiry = Date.now() + 55 * 60 * 1000; // Cache ~55 minutes
     return token;
   } catch (error) {
-    throw new Error(
-      "Ekart Auth failed: " + (error.response ? JSON.stringify(error.response.data) : error.message)
-    );
+    const detail = error.response ? JSON.stringify(error.response.data) : error.message;
+    throw new Error("Ekart Auth failed: " + detail);
   }
 }

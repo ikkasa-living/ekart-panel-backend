@@ -6,7 +6,7 @@ export const createEkartReturn = async (req, res) => {
   try {
     const requiredFields = [
       "orderId",
-      "customerName",
+      "customerName", 
       "customerPhone",
       "customerAddress",
       "city",
@@ -14,11 +14,6 @@ export const createEkartReturn = async (req, res) => {
       "pincode",
       "products",
       "amount",
-      "vendorName",
-      "pickupAddress",
-      "pickupCity",
-      "pickupState",
-      "pickupPincode",
       "hsn",
       "invoiceId",
     ];
@@ -53,7 +48,6 @@ export const createEkartReturn = async (req, res) => {
       volumetricWeight,
       amount,
       paymentMode,
-      vendorName,
       pickupAddress,
       pickupCity,
       pickupState,
@@ -62,11 +56,6 @@ export const createEkartReturn = async (req, res) => {
       hsn,
       invoiceId,
     } = req.body;
-
-    const finalPickupAddress = pickupAddress || customerAddress;
-    const finalPickupCity = pickupCity || city;
-    const finalPickupState = pickupState || state;
-    const finalPickupPincode = pickupPincode || pincode;
 
     const shipmentDimensions = {
       length: { value: Number(length) || 1 },
@@ -77,6 +66,7 @@ export const createEkartReturn = async (req, res) => {
 
     const token = await getAuthToken();
 
+    // Ekart Return Payload - Exactly matching official documentation
     const ekartPayload = {
       client_name: process.env.MERCHANT_CODE || "IKK",
       goods_category: "ESSENTIAL",
@@ -97,17 +87,16 @@ export const createEkartReturn = async (req, res) => {
                     pincode: pincode,
                     city: city,
                     state: state,
-                    primary_contact_number: customerPhone,
+                    primary_contact_number: customerPhone.toString(),
                   },
                 },
                 destination: {
-                  location_code:
-                    process.env.EKART_RETURN_LOCATION_CODE || "IKK_BLR_06",
+                  location_code: process.env.EKART_RETURN_LOCATION_CODE || "IKK_BLR_06",
                 },
               },
               shipment: {
-                client_reference_id: orderId,
-                tracking_id: `RET-${Date.now()}`,
+                client_reference_id: orderId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 20),
+                tracking_id: `CLTC${String(Date.now()).slice(-10)}`, 
                 shipment_value: amount,
                 shipment_dimensions: shipmentDimensions,
                 shipment_items: products.map((item, idx) => ({
@@ -125,10 +114,10 @@ export const createEkartReturn = async (req, res) => {
                     },
                   },
                   seller_details: {
-                    seller_reg_name: vendorName,
+                    seller_reg_name: "Ikkasa Concept Pvt Limite",
                     gstin_id: gstin || "",
                   },
-                  hsn,
+                  hsn: hsn || "",
                   ern: "",
                   discount: "",
                   item_attributes: [
@@ -137,12 +126,8 @@ export const createEkartReturn = async (req, res) => {
                   ],
                   pickup_info: {
                     reason: "OTHER_REASON",
-                    sub_reason: "OTHER_REASON",
+                    sub_reason: "OTHER_REASON", 
                     reason_description: "Customer requested for Return",
-                    pickup_address: finalPickupAddress,
-                    pickup_city: finalPickupCity,
-                    pickup_state: finalPickupState,
-                    pickup_pincode: finalPickupPincode,
                   },
                   smart_checks: [],
                 })),
@@ -153,6 +138,9 @@ export const createEkartReturn = async (req, res) => {
       ],
     };
 
+    console.log("Ekart return payload:", JSON.stringify(ekartPayload, null, 2));
+
+    // Call Ekart API
     const response = await axios.post(process.env.EKART_CREATE_URL, ekartPayload, {
       headers: {
         "Content-Type": "application/json",
@@ -161,8 +149,9 @@ export const createEkartReturn = async (req, res) => {
       },
     });
 
-    // Save Ekart tracking ID and update the order status and returnTracking info
-    const ekartTrackingId = response.data.tracking_id || `RET-${Date.now()}`;
+    // Extract tracking ID and update order
+    const ekartTrackingId = response.data.response?.[0]?.tracking_id || `RET-${Date.now()}`;
+
     await Order.findOneAndUpdate(
       { orderId },
       {
@@ -182,11 +171,11 @@ export const createEkartReturn = async (req, res) => {
       data: response.data,
     });
   } catch (error) {
-  console.error("Ekart return error:", error?.response?.data || error.message, error?.response?.status, error?.response?.headers);
-  return res.status(500).json({
-    success: false,
-    message: "Ekart create failed 2 ",
-    details: error?.response?.data || error.message,
-  });
-}
+    console.error("Ekart return error full message:", JSON.stringify(error?.response?.data, null, 2));
+    return res.status(500).json({
+      success: false,
+      message: "Ekart create failed",
+      details: error?.response?.data || error.message,
+    });
+  }
 };

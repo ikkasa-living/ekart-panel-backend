@@ -1,3 +1,4 @@
+// restrictEmail.js
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -10,7 +11,7 @@ export function restrictEmail(req, res, next) {
   }
 
   if (incomingEmail !== allowedEmail) {
-    return res.status(403).json({ message: "This email is not allowed." });
+    return res.status(403).json({ message: `Email not allowed.` });
   }
 
   next();
