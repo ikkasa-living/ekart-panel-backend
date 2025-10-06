@@ -8,7 +8,6 @@ const SHOP = process.env.SHOPIFY_STORE_URL;
 const API_VER = process.env.SHOPIFY_API_VERSION;
 const TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
-// Sync only inserts new orders, skips updating existing to avoid overwrite
 export const syncOrders = async (req, res) => {
   try {
     let allOrders = [];
