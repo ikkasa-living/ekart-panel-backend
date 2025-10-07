@@ -51,7 +51,7 @@ async function processRowsAndRespond(results, req, res) {
         customerPhone: row["mobile"] || undefined,
         customerAddress: row["Address"] || undefined,
         city: row["City"] || undefined,
-        state: row["State"] || undefined,
+        state: row["State"] || undefined, 
         pincode: row["Pincode"] || undefined,
         deadWeight: row["Weight"] ? parseFloat(row["Weight"]) : undefined,
         length,
@@ -74,7 +74,7 @@ async function processRowsAndRespond(results, req, res) {
         category: row["Category"] || undefined,
         unitPrice: row["Unit Price"] ? parseFloat(row["Unit Price"]) : undefined,
 
-        pickupAddress: row["Pickup Facility Name"] || row["Address"] || undefined,
+        pickupAddress: row["Customer Name"] && row["Address"] || undefined,
         pickupCity: row["Pickup City"] || row["City"] || undefined,
         pickupState: row["Pickup State"] || row["State"] || undefined,
         pickupPincode: row["Pickup Pincode"] || row["Pincode"] || undefined,
