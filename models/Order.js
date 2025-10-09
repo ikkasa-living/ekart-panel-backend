@@ -1,9 +1,12 @@
 import mongoose from "mongoose";
 
 const orderProductSchema = new mongoose.Schema({
-  productName: { type: String, required: true },
-  quantity: { type: Number, required: true },
-});
+  productName: { type: String, required: true },
+  quantity: { type: Number, required: true },
+  imageUrl: { type: String, default: '' }, 
+  smart_checks: { type: Array, default: [] },     
+},{timestamps: true});
+
 
 const returnTrackingHistorySchema = new mongoose.Schema({
   status: { type: String, required: true },
@@ -20,7 +23,6 @@ const orderSchema = new mongoose.Schema(
 
     customerName: { type: String },
     customerPhone: { type: String },
-    customerEmail: { type: String },
     customerAddress: { type: String },
     city: { type: String },
     state: { type: String },
@@ -36,6 +38,7 @@ const orderSchema = new mongoose.Schema(
     destinationPhone: { type: String },
 
     products: [orderProductSchema],
+    ImageUrl: { type: String, default: '' }, 
 
     deadWeight: { type: Number },
     length: { type: Number },

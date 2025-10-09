@@ -9,6 +9,8 @@ import shopifyRoutes from "./routes/shopifyRoutes.js";
 import authRoutes from "./routes/auth.js";
 import ekartRoutes from "./routes/ekartRoutes.js";
 
+
+
 dotenv.config();
 
 const app = express();
@@ -42,8 +44,7 @@ mongoose.connect(process.env.MONGO_URI)
     process.exit(1);
   });
 
-// Always start the server (works for both dev + production)
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });

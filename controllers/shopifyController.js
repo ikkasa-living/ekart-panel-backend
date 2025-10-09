@@ -14,6 +14,9 @@ export const syncOrders = async (req, res) => {
     let url = `https://${SHOP}/admin/api/${API_VER}/orders.json?status=any&limit=250&order=created_at%20desc`;
     let hasNextPage = true;
 
+    console.log("Fetching orders from Shopify...");
+
+    // 🌀 Fetch all orders with pagination
     while (hasNextPage) {
       const response = await axios.get(url, {
         headers: {
@@ -27,42 +30,78 @@ export const syncOrders = async (req, res) => {
       const linkHeader = response.headers["link"];
       if (linkHeader && linkHeader.includes('rel="next"')) {
         const match = linkHeader.match(/<([^>]+)>; rel="next"/);
-        if (match && match[1]) {
-          url = match[1];
-        } else {
-          hasNextPage = false;
-        }
+        url = match && match[1] ? match[1] : null;
+        hasNextPage = !!url;
       } else {
         hasNextPage = false;
       }
     }
 
+    console.log(`Fetched ${allOrders.length} orders from Shopify.`);
+
     const savedOrders = [];
+    const productCache = new Map(); // ⚡ Cache productId → imageUrl
 
+    // 🧠 Process each order
     for (let sOrder of allOrders) {
-      // Check if already exists to **skip updating**
       const existing = await Order.findOne({ shopifyId: sOrder.id });
-      if (existing) continue;
+      if (existing) continue; // Skip already saved orders
 
-      const customerName = 
+      const customerName =
         [sOrder.customer?.first_name, sOrder.customer?.last_name]
           .filter(Boolean)
-          .join(" ")
-          || sOrder.shipping_address?.name
-          || sOrder.billing_address?.name
-          || "Unknown Customer";
+          .join(" ") ||
+        sOrder.shipping_address?.name ||
+        sOrder.billing_address?.name ||
+        "Unknown Customer";
 
       let paymentMethod = sOrder.gateway ? sOrder.gateway.toUpperCase() : "";
       if (!paymentMethod || paymentMethod === "UNKNOWN") {
-        paymentMethod = sOrder.financial_status === "pending" ? "COD" : "PREPAID";
+        paymentMethod =
+          sOrder.financial_status === "pending" ? "COD" : "PREPAID";
       }
 
+      // 🖼️ Fetch product images efficiently
+      const productsWithImages = await Promise.all(
+        sOrder.line_items.map(async (item) => {
+          let imageUrl = "";
+
+          if (item.product_id) {
+            // ✅ Check cache first
+            if (productCache.has(item.product_id)) {
+              imageUrl = productCache.get(item.product_id);
+            } else {
+              try {
+                const productRes = await axios.get(
+                  `https://${SHOP}/admin/api/${API_VER}/products/${item.product_id}.json`,
+                  { headers: { "X-Shopify-Access-Token": TOKEN } }
+                );
+                imageUrl = productRes.data.product?.image?.src || "";
+                productCache.set(item.product_id, imageUrl); // Store in cache
+              } catch (err) {
+                console.warn(
+                  `⚠️ Failed to fetch image for product ${item.name} (ID: ${item.product_id})`
+                );
+              }
+            }
+          }
+
+          return {
+            productName: item.name,
+            quantity: item.quantity,
+            imageUrl:imageUrl,
+          };
+        })
+      );
+
+      // 🧾 Prepare order data
       const orderData = {
         shopifyId: sOrder.id,
-        orderId: sOrder.order_number.toString(),
+        orderId: sOrder.order_number?.toString() || "",
         orderDate: new Date(sOrder.created_at),
-        customerName: customerName || null,
-        customerPhone: sOrder.customer?.phone || sOrder.shipping_address?.phone || null,
+        customerName,
+        customerPhone:
+          sOrder.customer?.phone || sOrder.shipping_address?.phone || null,
         customerEmail: sOrder.customer?.email || sOrder.email || null,
         customerAddress: [
           sOrder.shipping_address?.address1,
@@ -70,11 +109,10 @@ export const syncOrders = async (req, res) => {
           sOrder.shipping_address?.city,
           sOrder.shipping_address?.province,
           sOrder.shipping_address?.country,
-        ].filter(Boolean).join(", "),
-        products: sOrder.line_items.map((item) => ({
-          productName: item.name,
-          quantity: item.quantity,
-        })),
+        ]
+          .filter(Boolean)
+          .join(", "),
+        products: productsWithImages,
         amount: parseFloat(sOrder.total_price) || 0,
         paymentMode: paymentMethod,
         vendorName: sOrder.vendor || "",
@@ -82,10 +120,12 @@ export const syncOrders = async (req, res) => {
         status: "",
       };
 
-      const saved = await Order.create(orderData); // Insert only new order
-
+      // 💾 Save new order to MongoDB
+      const saved = await Order.create(orderData);
       savedOrders.push(saved);
     }
+
+    console.log(`✅ Synced ${savedOrders.length} new orders.`);
 
     res.json({
       success: true,
@@ -93,12 +133,13 @@ export const syncOrders = async (req, res) => {
       data: savedOrders,
     });
   } catch (err) {
-    console.error(err.response?.data || err.message);
+    console.error("❌ Error syncing orders:", err.response?.data || err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 };
 
-// Other CRUD remains unchanged
+
+// Other CRUD functions remain unchanged
 
 export const createOrder = async (req, res) => {
   try {
@@ -114,7 +155,7 @@ export const createOrder = async (req, res) => {
 
 export const getOrders = async (req, res) => {
   try {
-    const orders = await Order.find().sort({ orderDate: -1 });
+    const orders = await Order.find().sort({ updatedAt: -1, createdAt: -1 });
     res.json({ success: true, data: orders });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -138,11 +179,14 @@ export const updateOrder = async (req, res) => {
     if (req.body.orderDate) {
       req.body.orderDate = new Date(req.body.orderDate);
     }
+    req.body.updatedAt = new Date();
+
     const updatedOrder = await Order.findByIdAndUpdate(
       req.params.id,
       req.body,
       { new: true }
     );
+
     if (!updatedOrder) {
       return res.status(404).json({ success: false, error: "Order not found" });
     }

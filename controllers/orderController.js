@@ -24,9 +24,10 @@ export const getOrders = async (req, res, next) => {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.max(1, parseInt(req.query.limit) || 20);
     const orders = await Order.find()
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit);
+    .sort({ updatedAt: -1 })  // Sort by last updated time descending
+    .skip((page - 1) * limit)
+    .limit(limit);
+
     const total = await Order.countDocuments();
     res.json({ total, page, limit, orders });
   } catch (err) {
@@ -36,21 +37,40 @@ export const getOrders = async (req, res, next) => {
 
 export const updateOrder = async (req, res, next) => {
   try {
+    if (req.body.updatedAt) {
+      delete req.body.updatedAt;
+    }
+
     if (req.body.length && req.body.breadth && req.body.height) {
       req.body.volumetricWeight = calcVolumetricWeight(
-        req.body.length, req.body.breadth, req.body.height
+        req.body.length,
+        req.body.breadth,
+        req.body.height
       );
     }
     if (req.body.orderDate) {
       req.body.orderDate = new Date(req.body.orderDate);
     }
-    const updatedOrder = await Order.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!updatedOrder) return res.status(404).json({ error: "Order not found" });
-    res.json(updatedOrder);
+
+    // ✅ Force updatedAt to current time
+    req.body.updatedAt = new Date();
+
+    const updatedOrder = await Order.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true }
+    );
+
+    if (!updatedOrder)
+      return res.status(404).json({ error: "Order not found" });
+
+    res.json({ data: updatedOrder });
   } catch (err) {
     next(err);
   }
 };
+
+
 
 export const deleteOrder = async (req, res, next) => {
   try {
