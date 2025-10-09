@@ -2,7 +2,12 @@ import express from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import { createEkartReturn } from "../controllers/ekartController.js";
+import { 
+  createEkartReturn, 
+  trackEkartShipment, 
+  bulkTrackShipments,
+  getOrderTracking 
+} from "../controllers/ekartController.js";
 
 const router = express.Router();
 
@@ -31,7 +36,17 @@ router.post("/upload", upload.single("file"), (req, res) => {
   res.json({ url: fileUrl });
 });
 
-// Existing Ekart return route
+// Ekart return creation route
 router.post("/return", createEkartReturn);
+
+// NEW TRACKING ROUTES
+// Track a specific order's return shipment
+router.get("/track/:orderId", trackEkartShipment);
+
+// Get order tracking information (without API call)
+router.get("/tracking/:orderId", getOrderTracking);
+
+// Bulk tracking for multiple shipments
+router.post("/track/bulk", bulkTrackShipments);
 
 export default router;

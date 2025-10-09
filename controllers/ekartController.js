@@ -3,6 +3,7 @@ import Order from "../models/Order.js";
 import { getAuthToken } from "../ekartService.js";
 
 export const createEkartReturn = async (req, res) => {
+  // Your existing createEkartReturn function remains the same
   try {
     const {
       orderId,
@@ -132,7 +133,6 @@ export const createEkartReturn = async (req, res) => {
 
     const ekartTrackingId = response.data.response?.[0]?.tracking_id || `RET-${Date.now()}`;
 
-    // Updated with proper status and timestamp handling
     const updatedOrder = await Order.findOneAndUpdate(
       { orderId },
       {
@@ -153,8 +153,8 @@ export const createEkartReturn = async (req, res) => {
         }
       },
       { 
-        new: true, // Return the updated document
-        runValidators: true // Run schema validations
+        new: true,
+        runValidators: true
       }
     );
 
@@ -165,7 +165,7 @@ export const createEkartReturn = async (req, res) => {
       message: "Ekart return shipment created successfully",
       data: response.data,
       trackingId: ekartTrackingId,
-      order: updatedOrder // Include updated order data
+      order: updatedOrder
     });
   } catch (error) {
     console.error("Ekart return error:", JSON.stringify(error?.response?.data, null, 2));
@@ -177,8 +177,8 @@ export const createEkartReturn = async (req, res) => {
   }
 };
 
-// Updated tracking updater API
-export const updateEkartTracking = async (req, res) => {
+// CORRECTED tracking function based on Ekart API documentation
+export const trackEkartShipment = async (req, res) => {
   try {
     const { orderId } = req.params;
     const order = await Order.findOne({ orderId });
@@ -191,51 +191,163 @@ export const updateEkartTracking = async (req, res) => {
     }
 
     const token = await getAuthToken();
-    const response = await axios.get(
-      `${process.env.EKART_TRACKING_URL}/${order.returnTracking.ekartTrackingId}`,
+    
+    // Correct payload format as per documentation
+    const trackingPayload = {
+      request_id: `track_${Date.now()}`,
+      tracking_ids: [order.returnTracking.ekartTrackingId]
+    };
+
+    // Use POST request with correct endpoint
+    const response = await axios.post(
+      `${process.env.EKART_API_BASE}/v2/shipments/track`,
+      trackingPayload,
       {
         headers: {
+          "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
           HTTP_X_MERCHANT_CODE: process.env.MERCHANT_CODE,
         },
       }
     );
 
-    const latestStatus = response.data?.status || "Unknown";
-    const statusDescription = response.data?.description || "Status updated";
+    console.log("Ekart tracking response:", JSON.stringify(response.data, null, 2));
 
-    // Update tracking with new status
+    // Extract tracking data for the specific tracking ID
+    const trackingData = response.data[order.returnTracking.ekartTrackingId];
+    
+    if (!trackingData) {
+      return res.status(404).json({
+        success: false,
+        message: "No tracking data found for this shipment"
+      });
+    }
+
+    // Get the latest status from history
+    const latestHistoryEntry = trackingData.history?.[0]; // History is in reverse chronological order
+    const currentStatus = latestHistoryEntry?.status || "Unknown";
+    const statusDescription = latestHistoryEntry?.public_description || "Status updated";
+
+    // Update order with complete tracking information
     const updatedOrder = await Order.findOneAndUpdate(
       { orderId },
       {
         $set: {
-          "returnTracking.currentStatus": latestStatus,
-          "returnTracking.lastUpdated": new Date()
+          "returnTracking.currentStatus": currentStatus,
+          "returnTracking.lastUpdated": new Date(),
+          "returnTracking.fullTrackingData": trackingData
         },
         $push: {
           "returnTracking.history": { 
-            status: latestStatus, 
-            timestamp: new Date(),
-            description: statusDescription
+            status: currentStatus, 
+            timestamp: new Date(latestHistoryEntry?.event_date || new Date()),
+            description: statusDescription,
+            city: latestHistoryEntry?.city,
+            hubName: latestHistoryEntry?.hub_name
           }
         }
       },
       { new: true }
     );
 
-    console.log("✅ Tracking updated for order:", orderId, "Status:", latestStatus);
+    console.log("✅ Tracking updated for order:", orderId, "Status:", currentStatus);
 
     res.json({ 
       success: true, 
-      tracking: updatedOrder.returnTracking,
+      tracking: {
+        currentStatus,
+        lastUpdated: new Date(),
+        history: trackingData.history,
+        shipmentDetails: {
+          delivered: trackingData.delivered,
+          shipmentValue: trackingData.shipment_value,
+          currentHub: trackingData.current_hub,
+          expectedDeliveryDate: trackingData.expected_delivery_date
+        }
+      },
+      order: updatedOrder.returnTracking,
       message: "Tracking status updated successfully"
     });
   } catch (err) {
-    console.error("Tracking update error:", err);
+    console.error("Tracking update error:", err?.response?.data || err.message);
     res.status(500).json({ 
       success: false, 
       message: "Tracking update failed", 
-      error: err.message 
+      error: err?.response?.data || err.message 
+    });
+  }
+};
+
+// Bulk tracking function for multiple orders
+export const bulkTrackShipments = async (req, res) => {
+  try {
+    const { trackingIds } = req.body; // Array of tracking IDs
+
+    if (!trackingIds || !Array.isArray(trackingIds)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide an array of tracking IDs"
+      });
+    }
+
+    const token = await getAuthToken();
+    
+    const trackingPayload = {
+      request_id: `bulk_track_${Date.now()}`,
+      tracking_ids: trackingIds
+    };
+
+    const response = await axios.post(
+      `${process.env.EKART_API_BASE}/v2/shipments/track`,
+      trackingPayload,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          HTTP_X_MERCHANT_CODE: process.env.MERCHANT_CODE,
+        },
+      }
+    );
+
+    res.json({ 
+      success: true, 
+      trackingData: response.data,
+      message: "Bulk tracking data retrieved successfully"
+    });
+  } catch (err) {
+    console.error("Bulk tracking error:", err?.response?.data || err.message);
+    res.status(500).json({ 
+      success: false, 
+      message: "Bulk tracking failed", 
+      error: err?.response?.data || err.message 
+    });
+  }
+};
+
+// Get order tracking by order ID (frontend helper)
+export const getOrderTracking = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const order = await Order.findOne({ orderId }).select('returnTracking status');
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found"
+      });
+    }
+
+    res.json({
+      success: true,
+      tracking: order.returnTracking,
+      orderStatus: order.status
+    });
+  } catch (error) {
+    console.error("Get tracking error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to retrieve tracking information",
+      error: error.message
     });
   }
 };
