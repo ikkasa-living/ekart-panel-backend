@@ -37,10 +37,9 @@ export const getOrders = async (req, res, next) => {
 
 export const updateOrder = async (req, res, next) => {
   try {
-    if (req.body.updatedAt) {
-      delete req.body.updatedAt;
-    }
+    if (req.body.updatedAt) delete req.body.updatedAt;
 
+    // Recalculate volumetric weight if needed
     if (req.body.length && req.body.breadth && req.body.height) {
       req.body.volumetricWeight = calcVolumetricWeight(
         req.body.length,
@@ -48,16 +47,17 @@ export const updateOrder = async (req, res, next) => {
         req.body.height
       );
     }
+
     if (req.body.orderDate) {
       req.body.orderDate = new Date(req.body.orderDate);
     }
 
-    // ✅ Force updatedAt to current time
     req.body.updatedAt = new Date();
 
+    // ✅ Use $set to merge fields, preventing deletion of missing fields
     const updatedOrder = await Order.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      { $set: req.body },
       { new: true }
     );
 
@@ -69,6 +69,7 @@ export const updateOrder = async (req, res, next) => {
     next(err);
   }
 };
+
 
 
 

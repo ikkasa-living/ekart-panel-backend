@@ -89,12 +89,12 @@ export const syncOrders = async (req, res) => {
           return {
             productName: item.name,
             quantity: item.quantity,
-            imageUrl:imageUrl,
+            imageUrl: imageUrl,
           };
         })
       );
 
-      // 🧾 Prepare order data
+      // 🧾 Prepare order data with current timestamp for new orders
       const orderData = {
         shopifyId: sOrder.id,
         orderId: sOrder.order_number?.toString() || "",
@@ -118,6 +118,9 @@ export const syncOrders = async (req, res) => {
         vendorName: sOrder.vendor || "",
         pickupAddress: sOrder.shipping_address?.address1 || "",
         status: "",
+        // Add explicit timestamps to ensure proper sorting
+        createdAt: new Date(),
+        updatedAt: new Date()
       };
 
       // 💾 Save new order to MongoDB
@@ -138,14 +141,16 @@ export const syncOrders = async (req, res) => {
   }
 };
 
-
-// Other CRUD functions remain unchanged
-
 export const createOrder = async (req, res) => {
   try {
     if (req.body.orderDate) {
       req.body.orderDate = new Date(req.body.orderDate);
     }
+    
+    // Ensure new orders have current timestamps
+    req.body.createdAt = new Date();
+    req.body.updatedAt = new Date();
+    
     const newOrder = await Order.create(req.body);
     res.json({ success: true, data: newOrder });
   } catch (err) {
@@ -155,7 +160,12 @@ export const createOrder = async (req, res) => {
 
 export const getOrders = async (req, res) => {
   try {
-    const orders = await Order.find().sort({ updatedAt: -1, createdAt: -1 });
+    // Sort by updatedAt descending first, then by createdAt descending
+    const orders = await Order.find().sort({ 
+      updatedAt: -1, 
+      createdAt: -1,
+      _id: -1 // fallback sort by MongoDB ObjectId (which contains timestamp)
+    });
     res.json({ success: true, data: orders });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -179,6 +189,8 @@ export const updateOrder = async (req, res) => {
     if (req.body.orderDate) {
       req.body.orderDate = new Date(req.body.orderDate);
     }
+    
+    // Always update the updatedAt timestamp
     req.body.updatedAt = new Date();
 
     const updatedOrder = await Order.findByIdAndUpdate(
