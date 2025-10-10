@@ -3,7 +3,6 @@ import Order from "../models/Order.js";
 import { getAuthToken } from "../ekartService.js";
 
 export const createEkartReturn = async (req, res) => {
-  // Your existing createEkartReturn function remains the same
   try {
     const {
       orderId,
@@ -42,6 +41,38 @@ export const createEkartReturn = async (req, res) => {
     const trackingIdNumber = orderId.replace(/\D/g, "").padStart(10, "0").slice(-10);
     const trackingAndReferenceId = `IKKR${trackingIdNumber}`;
 
+    // Helper to build nested checks object as per payload spec
+    const buildSmartChecks = (item) => {
+      // If passed as array of {code, inputs, is_mandatory}
+      if (Array.isArray(item.smart_checks) && item.smart_checks.length && typeof item.smart_checks[0] === 'object' && item.smart_checks[0].code) {
+        return [{
+          item_title: item.productName,
+          checks: item.smart_checks.reduce((acc, check) => {
+            acc[check.code] = {
+              inputs: check.inputs || {},
+              is_mandatory: typeof check.is_mandatory === 'boolean' ? check.is_mandatory : false
+            };
+            return acc;
+          }, {})
+        }];
+      }
+      // Default (demo) structure for cases where no checks exist on the item — customize as needed
+      return [{
+        item_title: item.productName,
+        checks: {
+          D_DAMAGE_CTH_CHECK: { inputs: {}, is_mandatory: false },
+          M_BRAND_CHECK_ON_PRODUCT_FOOTWEAR: {
+            inputs: { brand_name: item.productName.split(" ")[0] },
+            is_mandatory: true
+          },
+          M_PRODUCT_IMAGE_COLOR_PATTERN_MATCH: {
+            inputs: { item_image: item.imageUrl || "" },
+            is_mandatory: true
+          }
+        }
+      }];
+    };
+
     const ekartPayload = {
       client_name: process.env.MERCHANT_CODE || "IKK",
       goods_category: "ESSENTIAL",
@@ -62,7 +93,7 @@ export const createEkartReturn = async (req, res) => {
                     pincode: pincode,
                     city: city,
                     state: state,
-                    primary_contact_number: customerPhone.toString(),
+                    primary_contact_number: customerPhone ? customerPhone.toString() : "",
                   },
                 },
                 destination: {
@@ -75,6 +106,8 @@ export const createEkartReturn = async (req, res) => {
                     state: "Tamil Nadu",
                     primary_contact_number: "9012345678",
                   },
+                  // If you need a location_code, add here
+                  // location_code: "XYZ123"
                 },
               },
               shipment: {
@@ -112,7 +145,7 @@ export const createEkartReturn = async (req, res) => {
                     sub_reason: "OTHER_REASON",
                     reason_description: "Customer requested for Return",
                   },
-                  smart_checks: item.smart_checks || [],
+                  smart_checks: buildSmartChecks(item), // <--- Key Change
                 })),
               },
             },
@@ -140,8 +173,8 @@ export const createEkartReturn = async (req, res) => {
           status: "RETURN_REQUESTED",
           returnTracking: {
             currentStatus: "Return Initiated",
-            history: [{ 
-              status: "Return Initiated", 
+            history: [{
+              status: "Return Initiated",
               timestamp: new Date(),
               description: "Return request submitted to Ekart"
             }],
@@ -152,7 +185,7 @@ export const createEkartReturn = async (req, res) => {
           updatedAt: new Date()
         }
       },
-      { 
+      {
         new: true,
         runValidators: true
       }
@@ -176,6 +209,7 @@ export const createEkartReturn = async (req, res) => {
     });
   }
 };
+
 
 // CORRECTED tracking function based on Ekart API documentation
 export const trackEkartShipment = async (req, res) => {

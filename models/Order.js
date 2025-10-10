@@ -1,12 +1,17 @@
 import mongoose from "mongoose";
 
+
+const SmartCheckSchema = new mongoose.Schema({
+  item_title: { type: String, required: true },
+  checks: { type: Object, required: true }
+}, { _id: false });
+
 const orderProductSchema = new mongoose.Schema({
   productName: { type: String, required: true },
   quantity: { type: Number, required: true },
   imageUrl: { type: String, default: '' }, 
-  smart_checks: { type: Array, default: [] },     
+  smart_checks: { type: [SmartCheckSchema], default: [] }     
 },{timestamps: true});
-
 
 const returnTrackingHistorySchema = new mongoose.Schema({
   status: { type: String, required: true },
