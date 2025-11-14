@@ -2,9 +2,6 @@ import axios from "axios";
 import Order from "../models/Order.js";
 import { getAuthToken } from "../ekartService.js";
 
-/* ======================================================
-   🔧 Utility: Extract Ekart error messages
-====================================================== */
 function extractEkartErrorMessage(err) {
   const ekartMsg = err?.response?.data?.response?.[0]?.message
     ? err.response.data.response[0].message.join(", ")
@@ -12,9 +9,6 @@ function extractEkartErrorMessage(err) {
   return ekartMsg || err?.response?.data?.message || err?.message || "Unknown Ekart error";
 }
 
-/* ======================================================
-   🚚 CREATE EKART RETURN SHIPMENT
-====================================================== */
 export const createEkartReturn = async (req, res) => {
   try {
     const {
@@ -117,7 +111,6 @@ export const createEkartReturn = async (req, res) => {
           },
         ];
       }
-
       return [
         {
           item_title: item.productName,
@@ -136,7 +129,6 @@ export const createEkartReturn = async (req, res) => {
       ];
     };
 
-    // ✅ Payload with dynamic destination
     const ekartPayload = {
       client_name: process.env.MERCHANT_CODE || "IKK",
       goods_category: "ESSENTIAL",
@@ -218,7 +210,6 @@ export const createEkartReturn = async (req, res) => {
 
     console.log("🟢 Ekart return payload:\n", JSON.stringify(ekartPayload, null, 2));
 
-    // 🔥 Call Ekart API
     const response = await axios.post(process.env.EKART_CREATE_URL, ekartPayload, {
       headers: {
         "Content-Type": "application/json",
@@ -228,7 +219,10 @@ export const createEkartReturn = async (req, res) => {
     });
 
     const ekartResp = response.data;
+
+    // ✅ FIXED: Better error handling
     if (ekartResp?.response && ekartResp.response[0]?.status !== "REQUEST_ACCEPTED") {
+      console.error("❌ Ekart rejected return request:", ekartResp.response[0]);
       return res.status(400).json({
         success: false,
         message:
@@ -238,14 +232,14 @@ export const createEkartReturn = async (req, res) => {
       });
     }
 
-    const ekartTrackingId =
-      ekartResp.response?.[0]?.tracking_id || `RET-${Date.now()}`;
+    const ekartTrackingId = ekartResp.response?.[0]?.tracking_id || `RET-${Date.now()}`;
 
+    // ✅ FIXED: Use findOneAndUpdate with 'new: true' to get updated document
     const updatedOrder = await Order.findOneAndUpdate(
       { orderId },
       {
         $set: {
-          status: "RETURN_REQUESTED",
+          status: "RETURN_REQUESTED", // ✅ Set status here
           returnTracking: {
             currentStatus: "Return Initiated",
             history: [
@@ -262,17 +256,20 @@ export const createEkartReturn = async (req, res) => {
           updatedAt: new Date(),
         },
       },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true } // ✅ CRITICAL: Returns updated document
     );
 
-    console.log("✅ Return created successfully for Order:", orderId);
+    console.log("✅ Order status updated to RETURN_REQUESTED:", updatedOrder?.status);
+    console.log("✅ Tracking ID:", ekartTrackingId);
 
+    // ✅ FIXED: Return the complete updated order object
     return res.status(200).json({
       success: true,
       message: "Ekart return shipment created successfully",
       data: ekartResp,
       trackingId: ekartTrackingId,
-      order: updatedOrder,
+      order: updatedOrder, // ✅ Return full updated order
+      orderStatus: updatedOrder?.status, // ✅ Also explicitly include status
     });
   } catch (error) {
     const errReason = extractEkartErrorMessage(error);
@@ -285,9 +282,6 @@ export const createEkartReturn = async (req, res) => {
   }
 };
 
-/* ======================================================
-   📦 TRACK EKART SHIPMENT
-====================================================== */
 export const trackEkartShipment = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -332,8 +326,7 @@ export const trackEkartShipment = async (req, res) => {
 
     const latestHistoryEntry = trackingData.history?.[0];
     const currentStatus = latestHistoryEntry?.status || "Unknown";
-    const statusDescription =
-      latestHistoryEntry?.public_description || "Status updated";
+    const statusDescription = latestHistoryEntry?.public_description || "Status updated";
 
     const updatedOrder = await Order.findOneAndUpdate(
       { orderId },
@@ -383,9 +376,6 @@ export const trackEkartShipment = async (req, res) => {
   }
 };
 
-/* ======================================================
-   📦 BULK TRACK SHIPMENTS
-====================================================== */
 export const bulkTrackShipments = async (req, res) => {
   try {
     const { trackingIds } = req.body;
@@ -398,7 +388,6 @@ export const bulkTrackShipments = async (req, res) => {
     }
 
     const token = await getAuthToken();
-
     const trackingPayload = {
       request_id: `bulk_track_${Date.now()}`,
       tracking_ids: trackingIds,
@@ -432,9 +421,6 @@ export const bulkTrackShipments = async (req, res) => {
   }
 };
 
-/* ======================================================
-   🧭 GET SINGLE ORDER TRACKING
-====================================================== */
 export const getOrderTracking = async (req, res) => {
   try {
     const { orderId } = req.params;
