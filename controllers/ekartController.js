@@ -9,12 +9,20 @@ function extractEkartErrorMessage(err) {
   return ekartMsg || err?.response?.data?.message || err?.message || "Unknown Ekart error";
 }
 
-// ✅ FIXED: trackEkartShipment - Only updates tracking, preserves status
+function generateUniqueTrackingId(orderId) {
+  const orderNumber = orderId.replace(/\D/g, "").slice(-6) || "000000";
+  const timestamp = Date.now().toString().slice(-4);
+  const random = Math.floor(Math.random() * 100).toString().padStart(2, "0");
+  
+  const trackingId = `IKKR${orderNumber}${timestamp}${random}`;
+  console.log("📌 Generated unique tracking ID:", trackingId, "for order:", orderId);
+  return trackingId;
+}
+
 export const trackEkartShipment = async (req, res) => {
   try {
     const { orderId } = req.params;
     
-    // ✅ Find order by orderId
     const order = await Order.findOne({ orderId });
 
     if (!order?.returnTracking?.ekartTrackingId) {
@@ -48,8 +56,6 @@ export const trackEkartShipment = async (req, res) => {
       }
     );
 
-    console.log("📦 Ekart tracking response:", JSON.stringify(response.data, null, 2));
-
     const trackingData = response.data[order.returnTracking.ekartTrackingId];
 
     if (!trackingData) {
@@ -63,18 +69,14 @@ export const trackEkartShipment = async (req, res) => {
     const currentStatus = latestHistoryEntry?.status || "Unknown";
     const statusDescription = latestHistoryEntry?.public_description || "Status updated";
 
-    // ✅ CRITICAL FIX: Only update returnTracking, PRESERVE status field
     const updatedOrder = await Order.findOneAndUpdate(
       { orderId },
       {
         $set: {
-          // ✅ UPDATE: Only tracking info
           "returnTracking.currentStatus": currentStatus,
           "returnTracking.lastUpdated": new Date(),
           "returnTracking.fullTrackingData": trackingData,
-          // ✅ DO NOT CHANGE: status field stays as is (RETURN_REQUESTED)
         },
-        // ✅ APPEND: Add to history array, don't replace it
         $push: {
           "returnTracking.history": {
             status: currentStatus,
@@ -91,14 +93,14 @@ export const trackEkartShipment = async (req, res) => {
     console.log("✅ Order tracking updated:", {
       orderId,
       newTrackingStatus: currentStatus,
-      preservedOrderStatus: updatedOrder.status, // ✅ Should still be RETURN_REQUESTED
+      preservedOrderStatus: updatedOrder.status,
     });
 
     res.json({
       success: true,
       tracking: updatedOrder.returnTracking,
-      order: updatedOrder,  // ✅ Return full order with preserved status
-      orderStatus: updatedOrder.status,  // ✅ Original status preserved
+      order: updatedOrder,
+      orderStatus: updatedOrder.status,
       message: "Tracking status updated successfully",
     });
 
@@ -113,7 +115,6 @@ export const trackEkartShipment = async (req, res) => {
   }
 };
 
-// ✅ NEW: Retry failed return - Reset and prepare for new pickup
 export const retryFailedReturn = async (req, res) => {
   try {
     const { orderId } = req.body;
@@ -127,7 +128,6 @@ export const retryFailedReturn = async (req, res) => {
       });
     }
 
-    // ✅ Check if pickup was actually cancelled
     const lastTracking = order.returnTracking;
     if (lastTracking?.currentStatus !== "Reverse pickup cancelled") {
       return res.status(400).json({
@@ -139,12 +139,11 @@ export const retryFailedReturn = async (req, res) => {
 
     console.log("🔄 Resetting failed return for orderId:", orderId);
 
-    // ✅ Clear failed return data - Reset to allow new return
     const resetOrder = await Order.findOneAndUpdate(
       { orderId },
       {
         $set: {
-          status: "New",  // Reset to new
+          status: "New",
           returnTracking: {
             currentStatus: "",
             history: [],
@@ -175,7 +174,6 @@ export const retryFailedReturn = async (req, res) => {
   }
 };
 
-// ✅ NEW: Reschedule pickup - Try creating new return for same order
 export const reschedulePickup = async (req, res) => {
   try {
     const {
@@ -215,7 +213,6 @@ export const reschedulePickup = async (req, res) => {
       });
     }
 
-    // ✅ Check if this is a retry
     if (order.returnTracking?.currentStatus !== "Reverse pickup cancelled") {
       return res.status(400).json({
         success: false,
@@ -226,10 +223,8 @@ export const reschedulePickup = async (req, res) => {
 
     console.log("📍 Attempting to reschedule pickup for:", orderId);
 
-    // ✅ Prepare new return payload (same as createEkartReturn)
     const token = await getAuthToken();
-    const trackingIdNumber = orderId.replace(/\D/g, "").padStart(10, "0").slice(-10);
-    const trackingAndReferenceId = `IKKR${trackingIdNumber}`;
+    const trackingAndReferenceId = generateUniqueTrackingId(orderId);
 
     const ekartPayload = {
       client_name: process.env.MERCHANT_CODE || "IKK",
@@ -323,71 +318,96 @@ export const reschedulePickup = async (req, res) => {
     };
 
     console.log("📤 Sending reschedule payload to Ekart...");
+    console.log("   Tracking ID:", trackingAndReferenceId);
 
-    // ✅ Call Ekart API
-    const ekartResponse = await axios.post(
-      process.env.EKART_CREATE_URL,
-      ekartPayload,
-      {
-        headers: {
-          "Content-Type": "application/json",
-          HTTP_X_MERCHANT_CODE: process.env.MERCHANT_CODE,
-          Authorization: `Bearer ${token}`,
-        },
-      }
-    );
-
-    const ekartResp = ekartResponse.data;
-
-    // ✅ Check Ekart response
-    if (ekartResp?.response && ekartResp.response[0]?.status !== "REQUEST_ACCEPTED") {
-      console.error("❌ Ekart rejected reschedule:", ekartResp.response[0]);
+    let ekartResponse;
+    try {
+      ekartResponse = await axios.post(
+        process.env.EKART_CREATE_URL,
+        ekartPayload,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            HTTP_X_MERCHANT_CODE: process.env.MERCHANT_CODE,
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+    } catch (ekartError) {
+      console.error("❌ Ekart API Error (reschedule):");
+      console.error("   Status:", ekartError?.response?.status);
+      console.error("   Data:", JSON.stringify(ekartError?.response?.data, null, 2));
+      
+      const errReason = extractEkartErrorMessage(ekartError);
       return res.status(400).json({
         success: false,
-        message: ekartResp.response[0]?.message?.join(", ") || "Ekart rejected reschedule request",
-        errorType: "NO_VENDOR_SERVICEABILITY",
-        details: ekartResp,
+        message: `Ekart API Error: ${errReason}`,
+        errorType: "EKART_API_ERROR",
       });
     }
 
-    const newTrackingId = ekartResp.response?.[0]?.tracking_id || `RET-${Date.now()}`;
+    const ekartResp = ekartResponse.data;
 
-    // ✅ Update order with new tracking
-    const rescheduledOrder = await Order.findOneAndUpdate(
-      { orderId },
-      {
-        $set: {
-          status: "RETURN_REQUESTED",
-          returnTracking: {
-            currentStatus: "Rescheduled - Pickup Requested",
-            history: [
-              {
-                status: "Rescheduled - Pickup Requested",
-                timestamp: new Date(),
-                description: "Return rescheduled after previous cancellation",
-              },
-            ],
-            ekartTrackingId: newTrackingId,
-            lastUpdated: new Date(),
-            previousAttemptCancelled: true,
-            cancelledDate: order.returnTracking?.lastUpdated,
+    console.log("📥 Ekart Reschedule Response:");
+    console.log("   Full Response:", JSON.stringify(ekartResp, null, 2));
+
+    const responseArray = ekartResp?.response || [];
+    const firstResponse = responseArray?.[0];
+
+    if (firstResponse?.status === "REQUEST_ACCEPTED" || firstResponse?.status === "REQUEST_RECEIVED") {
+      console.log("✅ Ekart ACCEPTED reschedule request!");
+      
+      const newTrackingId = firstResponse?.tracking_id || trackingAndReferenceId;
+
+      const rescheduledOrder = await Order.findOneAndUpdate(
+        { orderId },
+        {
+          $set: {
+            status: "RETURN_REQUESTED",
+            returnTracking: {
+              currentStatus: "Rescheduled - Pickup Requested",
+              history: [
+                {
+                  status: "Rescheduled - Pickup Requested",
+                  timestamp: new Date(),
+                  description: "Return rescheduled after previous cancellation",
+                  previousTrackingId: order.returnTracking?.ekartTrackingId,
+                },
+              ],
+              ekartTrackingId: newTrackingId,
+              lastUpdated: new Date(),
+              previousAttemptCancelled: true,
+              cancelledDate: order.returnTracking?.lastUpdated,
+              rescheduledAt: new Date(),
+              retryCount: (order.returnTracking?.retryCount || 0) + 1,
+            },
+            ekartResponse: ekartResp,
+            updatedAt: new Date(),
           },
-          ekartResponse: ekartResp,
-          updatedAt: new Date(),
         },
-      },
-      { new: true }
-    );
+        { new: true }
+      );
 
-    console.log("✅ Reschedule successful with new tracking ID:", newTrackingId);
+      console.log("✅ Reschedule successful with new tracking ID:", newTrackingId);
 
-    res.json({
-      success: true,
-      message: "Pickup rescheduled successfully!",
-      trackingId: newTrackingId,
-      order: rescheduledOrder,
-      orderStatus: rescheduledOrder.status,
-    });
+      res.json({
+        success: true,
+        message: "Pickup rescheduled successfully!",
+        trackingId: newTrackingId,
+        order: rescheduledOrder,
+        orderStatus: rescheduledOrder.status,
+      });
+
+    } else {
+      const errorMsg = firstResponse?.message?.join?.(", ") || "Ekart rejected reschedule";
+      console.error("❌ Ekart rejected reschedule:", errorMsg);
+      
+      return res.status(400).json({
+        success: false,
+        message: `Ekart rejected: ${errorMsg}`,
+        errorType: "RESCHEDULE_REJECTED",
+      });
+    }
 
   } catch (error) {
     console.error("❌ Reschedule error:", error);
@@ -401,7 +421,6 @@ export const reschedulePickup = async (req, res) => {
   }
 };
 
-// Keep other existing functions
 export const bulkTrackShipments = async (req, res) => {
   try {
     const { trackingIds } = req.body;
@@ -475,7 +494,6 @@ export const getOrderTracking = async (req, res) => {
   }
 };
 
-// ✅ NEW: Create return (keep existing implementation)
 export const createEkartReturn = async (req, res) => {
   try {
     const {
@@ -506,6 +524,8 @@ export const createEkartReturn = async (req, res) => {
       destinationPhone,
     } = req.body;
 
+    console.log("📤 Creating Ekart return for:", orderId);
+
     const order = await Order.findOne({ orderId });
     const destination = {
       name: destinationName || order?.destinationName || "Ikkasa Warehouse",
@@ -518,8 +538,7 @@ export const createEkartReturn = async (req, res) => {
     };
 
     const token = await getAuthToken();
-    const trackingIdNumber = orderId.replace(/\D/g, "").padStart(10, "0").slice(-10);
-    const trackingAndReferenceId = `IKKR${trackingIdNumber}`;
+    const trackingAndReferenceId = generateUniqueTrackingId(orderId);
 
     const ekartPayload = {
       client_name: process.env.MERCHANT_CODE || "IKK",
@@ -612,81 +631,129 @@ export const createEkartReturn = async (req, res) => {
       ],
     };
 
-    console.log("📤 Creating Ekart return for:", orderId);
+    console.log("📤 Sending return payload to Ekart...");
+    console.log("   Tracking ID:", trackingAndReferenceId);
 
-    const ekartResponse = await axios.post(
-      process.env.EKART_CREATE_URL,
-      ekartPayload,
-      {
-        headers: {
-          "Content-Type": "application/json",
-          HTTP_X_MERCHANT_CODE: process.env.MERCHANT_CODE,
-          Authorization: `Bearer ${token}`,
-        },
-      }
-    );
+    let ekartResponse;
+    try {
+      ekartResponse = await axios.post(
+        process.env.EKART_CREATE_URL,
+        ekartPayload,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            HTTP_X_MERCHANT_CODE: process.env.MERCHANT_CODE,
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+    } catch (ekartError) {
+      console.error("❌ Ekart API Error (try-catch):");
+      console.error("   Status:", ekartError?.response?.status);
+      console.error("   Data:", JSON.stringify(ekartError?.response?.data, null, 2));
+      
+      const errReason = extractEkartErrorMessage(ekartError);
+      return res.status(400).json({
+        success: false,
+        message: `Ekart API Error: ${errReason}`,
+        errorType: "EKART_API_ERROR",
+        details: ekartError?.response?.data,
+      });
+    }
 
     const ekartResp = ekartResponse.data;
 
-    if (ekartResp?.response && ekartResp.response[0]?.status !== "REQUEST_ACCEPTED") {
-      const errorMsg = ekartResp.response[0]?.message?.join(", ") || "Request rejected";
-      console.error("❌ Ekart rejected request:", errorMsg);
+    console.log("📥 Ekart Response Received:");
+    console.log("   Full Response:", JSON.stringify(ekartResp, null, 2));
 
-      if (errorMsg.includes("No vendor has pickup serviceability")) {
+    const responseArray = ekartResp?.response || [];
+    const firstResponse = responseArray?.[0];
+
+    console.log("📊 Response Analysis:");
+    console.log("   Response Array:", responseArray);
+    console.log("   First Response:", firstResponse);
+    console.log("   Status:", firstResponse?.status);
+
+    if (firstResponse?.status === "REQUEST_ACCEPTED" || firstResponse?.status === "REQUEST_RECEIVED") {
+      console.log("✅ Ekart ACCEPTED the request!");
+      
+      const trackingId = firstResponse?.tracking_id || trackingAndReferenceId;
+
+      console.log("✅ Ekart accepted request. Saving to database...");
+      console.log("   Tracking ID:", trackingId);
+
+      const updatedOrder = await Order.findOneAndUpdate(
+        { orderId },
+        {
+          $set: {
+            status: "RETURN_REQUESTED",
+            returnTracking: {
+              currentStatus: "Return Initiated",
+              history: [{
+                status: "Return Initiated",
+                timestamp: new Date(),
+                description: "Return request submitted to Ekart",
+              }],
+              ekartTrackingId: trackingId,
+              lastUpdated: new Date(),
+              retryCount: 0,
+            },
+            ekartResponse: ekartResp,
+            updatedAt: new Date(),
+          },
+        },
+        { new: true }
+      );
+
+      console.log("✅ Return created successfully in DB with tracking ID:", trackingId);
+
+      res.json({
+        success: true,
+        message: "Ekart return shipment created successfully",
+        trackingId: trackingId,
+        order: updatedOrder,
+        orderStatus: updatedOrder.status,
+      });
+
+    } else {
+      const errorMsg = firstResponse?.message?.join?.(", ") || 
+                       firstResponse?.message || 
+                       ekartResp?.message ||
+                       "Ekart rejected request";
+      
+      console.error("❌ Ekart Rejected Request:");
+      console.error("   Status:", firstResponse?.status);
+      console.error("   Message:", errorMsg);
+
+      if (errorMsg?.includes("No vendor has pickup serviceability")) {
         return res.status(400).json({
           success: false,
           message: "Return cannot be processed for this location",
-          details: "Ekart doesn't have pickup service in this area. Please provide an alternative address.",
+          details: "Ekart doesn't have pickup service in this area.",
           errorType: "NO_VENDOR_SERVICEABILITY",
-          customerMessage: "We cannot arrange pickup from your current location. Please provide a different address within a serviceable area.",
+        });
+      }
+
+      if (errorMsg?.includes("Shipment already present")) {
+        return res.status(400).json({
+          success: false,
+          message: "Tracking ID already exists. Try again.",
+          errorType: "DUPLICATE_SHIPMENT",
         });
       }
 
       return res.status(400).json({
         success: false,
-        message: "Ekart rejected the return request",
+        message: `Ekart rejected: ${errorMsg}`,
         details: errorMsg,
         errorType: "REQUEST_REJECTED",
       });
     }
 
-    const trackingId = ekartResp.response?.[0]?.tracking_id;
-
-    const updatedOrder = await Order.findOneAndUpdate(
-      { orderId },
-      {
-        $set: {
-          status: "RETURN_REQUESTED",
-          returnTracking: {
-            currentStatus: "Return Initiated",
-            history: [{
-              status: "Return Initiated",
-              timestamp: new Date(),
-              description: "Return request submitted to Ekart",
-            }],
-            ekartTrackingId: trackingId,
-            lastUpdated: new Date(),
-          },
-          ekartResponse: ekartResp,
-          updatedAt: new Date(),
-        },
-      },
-      { new: true }
-    );
-
-    console.log("✅ Return created successfully with tracking ID:", trackingId);
-
-    res.json({
-      success: true,
-      message: "Ekart return shipment created successfully",
-      trackingId: trackingId,
-      order: updatedOrder,
-      orderStatus: updatedOrder.status,
-    });
-
   } catch (err) {
+    console.error("❌ Unexpected Error:", err.message);
     const errReason = extractEkartErrorMessage(err);
-    console.error("❌ Error creating return:", errReason);
+    
     res.status(500).json({
       success: false,
       message: `Failed to create return: ${errReason}`,
